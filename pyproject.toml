@@ -2,18 +2,18 @@
 requires = [
     "setuptools",
     "wheel",
-    "cffi >= 2.0.0; platform_system != 'Emscripten'",
-    "cffi >= 2.0.0; platform_system == 'Emscripten'",
+    "cffi >= 1.15.0; python_version < '3.14'",
+    "cffi >= 2.0.0; python_version >= '3.14'",
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pymunk"
 version = "7.2.0" # remember to change me for new versions!
-# Require cffi >= 2.0.0 for free-threaded CPython support.
+# Require cffi >= 2.0.0 for Python 3.14 free-threaded support.
 dependencies = [
-    "cffi >= 2.0.0; platform_system != 'Emscripten'",
-    "cffi >= 2.0.0; platform_system == 'Emscripten'",
+    "cffi >= 1.15.0; python_version < '3.14'",
+    "cffi >= 2.0.0; python_version >= '3.14'",
 ]
 authors = [{ name = "Victor Blomqvist", email = "vb@viblo.se" }]
 readme = "README.rst"

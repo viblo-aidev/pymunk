@@ -5,6 +5,10 @@ import pymunk as p
 
 
 class UnitTestFreeThreading(unittest.TestCase):
+    def _assert_thread_finishes(self, thread: threading.Thread) -> None:
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+
     def _make_blocked_space(
         self,
     ) -> tuple[p.Space, p.Body, p.Shape, threading.Event, threading.Event]:
@@ -38,11 +42,12 @@ class UnitTestFreeThreading(unittest.TestCase):
         t1.start()
         self.assertTrue(entered.wait(2))
         t2.start()
+        self.assertFalse(second_done.is_set())
         self.assertFalse(second_done.wait(0.1))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(first_done.is_set())
         self.assertTrue(second_done.is_set())
@@ -60,11 +65,12 @@ class UnitTestFreeThreading(unittest.TestCase):
         t1.start()
         self.assertTrue(entered.wait(2))
         t2.start()
+        self.assertFalse(add_done.is_set())
         self.assertFalse(add_done.wait(0.1))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(add_done.is_set())
         self.assertIn(added_body, space.bodies)
@@ -81,11 +87,12 @@ class UnitTestFreeThreading(unittest.TestCase):
         t1.start()
         self.assertTrue(entered.wait(2))
         t2.start()
+        self.assertFalse(remove_done.is_set())
         self.assertFalse(remove_done.wait(0.1))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(remove_done.is_set())
         self.assertNotIn(body, space.bodies)
@@ -106,11 +113,12 @@ class UnitTestFreeThreading(unittest.TestCase):
         t1.start()
         self.assertTrue(entered.wait(2))
         t2.start()
+        self.assertFalse(query_done.is_set())
         self.assertFalse(query_done.wait(0.1))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(query_done.is_set())
 
@@ -126,11 +134,12 @@ class UnitTestFreeThreading(unittest.TestCase):
         t1.start()
         self.assertTrue(entered.wait(2))
         t2.start()
+        self.assertFalse(setter_done.is_set())
         self.assertFalse(setter_done.wait(0.1))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(setter_done.is_set())
         self.assertEqual(body.position, (10, 20))
@@ -148,11 +157,12 @@ class UnitTestFreeThreading(unittest.TestCase):
         t1.start()
         self.assertTrue(entered.wait(2))
         t2.start()
+        self.assertFalse(setter_done.is_set())
         self.assertFalse(setter_done.wait(0.1))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(setter_done.is_set())
         self.assertEqual(shape.filter, new_filter)
@@ -171,11 +181,12 @@ class UnitTestFreeThreading(unittest.TestCase):
         t1.start()
         self.assertTrue(entered.wait(2))
         t2.start()
+        self.assertFalse(setter_done.is_set())
         self.assertFalse(setter_done.wait(0.1))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(setter_done.is_set())
         self.assertEqual(joint.max_force, 123)
@@ -197,8 +208,8 @@ class UnitTestFreeThreading(unittest.TestCase):
         self.assertTrue(second_done.wait(2))
 
         release.set()
-        t1.join(2)
-        t2.join(2)
+        self._assert_thread_finishes(t1)
+        self._assert_thread_finishes(t2)
 
         self.assertTrue(second_done.is_set())
 

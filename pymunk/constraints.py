@@ -77,7 +77,7 @@ if TYPE_CHECKING:
 from ._chipmunk_cffi import ffi, lib
 from ._pickle import PickleMixin
 from ._typing_attr import TypingAttrMixing
-from ._util import _locked_spaces
+from ._util import _lock_from_cp_space, _locked_spaces
 from .body import Body
 from .vec2d import Vec2d
 
@@ -115,13 +115,14 @@ class Constraint(PickleMixin, TypingAttrMixing, object):
             user_data = lib.cpConstraintGetUserData(cp_constraint)
             if user_data == ffi.NULL:
                 cp_space = lib.cpConstraintGetSpace(cp_constraint)
-                if cp_space != ffi.NULL:
-                    lib.cpSpaceRemoveConstraint(cp_space, cp_constraint)
-                lib.cpConstraintFree(cp_constraint)
+                with _lock_from_cp_space(cp_space):
+                    if cp_space != ffi.NULL:
+                        lib.cpSpaceRemoveConstraint(cp_space, cp_constraint)
+                    lib.cpConstraintFree(cp_constraint)
                 return
 
-            constraint = ffi.from_handle(user_data)
-            with _locked_spaces(constraint.a.space, constraint.b.space):
+            cp_space = lib.cpConstraintGetSpace(cp_constraint)
+            with _lock_from_cp_space(cp_space):
                 cp_space = lib.cpConstraintGetSpace(cp_constraint)
                 if cp_space != ffi.NULL:
                     lib.cpSpaceRemoveConstraint(cp_space, cp_constraint)

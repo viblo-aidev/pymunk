@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 from ._chipmunk_cffi import ffi, lib
 from ._pickle import PickleMixin, _State
 from ._typing_attr import TypingAttrMixing
-from ._util import _dead_ref, _locked_spaces, _space_lock
+from ._util import _dead_ref, _lock_from_cp_space, _locked_spaces, _space_lock
 from ._weakkeysview import SynchronizedKeysView, WeakKeysView
 from .vec2d import Vec2d
 
@@ -191,8 +191,8 @@ class Body(PickleMixin, TypingAttrMixing, object):
         """
 
         def freebody(cp_body: ffi.CData) -> None:
-            body = ffi.from_handle(lib.cpBodyGetUserData(cp_body))
-            with _space_lock(body.space):
+            cp_space = lib.cpBodyGetSpace(cp_body)
+            with _lock_from_cp_space(cp_space):
                 # remove all shapes on this body from the space
                 lib.cpBodyEachShape(cp_body, lib.ext_cpBodyShapeIteratorFunc, ffi.NULL)
 
@@ -201,7 +201,6 @@ class Body(PickleMixin, TypingAttrMixing, object):
                     cp_body, lib.ext_cpBodyConstraintIteratorFunc, ffi.NULL
                 )
 
-                cp_space = lib.cpBodyGetSpace(cp_body)
                 # print(cp_space, cp_space == ffi.NULL)
                 if cp_space != ffi.NULL:
                     lib.cpSpaceRemoveBody(cp_space, cp_body)
@@ -470,6 +469,7 @@ class Body(PickleMixin, TypingAttrMixing, object):
     def velocity_func(self, func: _VelocityFunc) -> None:
         with self._lock_context():
             if func == Body.update_velocity:
+                self._velocity_func = None
                 lib.cpBodySetVelocityUpdateFunc(
                     self._body, ffi.addressof(lib, "cpBodyUpdateVelocity")
                 )
@@ -495,6 +495,7 @@ class Body(PickleMixin, TypingAttrMixing, object):
     def position_func(self, func: _PositionFunc) -> None:
         with self._lock_context():
             if func == Body.update_position:
+                self._position_func = None
                 lib.cpBodySetPositionUpdateFunc(
                     self._body, ffi.addressof(lib, "cpBodyUpdatePosition")
                 )

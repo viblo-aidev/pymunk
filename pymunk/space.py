@@ -16,7 +16,7 @@ from ._callbacks import *
 from ._chipmunk_cffi import ffi, lib
 from ._collision_handler import CollisionHandler, _CollisionCallback
 from ._pickle import PickleMixin, _State
-from ._util import _dead_ref
+from ._util import _dead_ref, _lock_from_cp_space
 from ._weakkeysview import SynchronizedKeysView
 from .arbiter import Arbiter, _arbiter_from_dict, _arbiter_to_dict
 from .body import Body
@@ -80,6 +80,7 @@ class Space(PickleMixin, object):
 
         self.threaded = threaded and platform.system() != "Windows"
         self._lock = threading.RLock()
+        self._lock_handle = ffi.new_handle(self._lock)
 
         if self.threaded:
             cp_space = lib.cpHastySpaceNew()
@@ -88,18 +89,21 @@ class Space(PickleMixin, object):
             cp_space = lib.cpSpaceNew()
             freefunc = lib.cpSpaceFree
 
+        lock = self._lock
+
         def spacefree(cp_space: ffi.CData) -> None:
             cp_shapes: list[Shape] = []
-            with self._lock:
+            original_cp_space = cp_space
+            with lock:
                 cp_shapes_h = ffi.new_handle(cp_shapes)
                 lib.cpSpaceEachShape(
                     cp_space, lib.ext_cpSpaceShapeIteratorFunc, cp_shapes_h
                 )
 
                 for cp_shape in cp_shapes:
-                    cp_space = lib.cpShapeGetSpace(cp_shape)
+                    shape_space = lib.cpShapeGetSpace(cp_shape)
 
-                    lib.cpSpaceRemoveShape(cp_space, cp_shape)
+                    lib.cpSpaceRemoveShape(shape_space, cp_shape)
                     lib.cpShapeSetBody(cp_shape, ffi.NULL)
 
                 cp_constraints: list[Constraint] = []
@@ -108,8 +112,8 @@ class Space(PickleMixin, object):
                     cp_space, lib.ext_cpSpaceConstraintIteratorFunc, cp_constraints_h
                 )
                 for cp_constraint in cp_constraints:
-                    cp_space = lib.cpConstraintGetSpace(cp_constraint)
-                    lib.cpSpaceRemoveConstraint(cp_space, cp_constraint)
+                    constraint_space = lib.cpConstraintGetSpace(cp_constraint)
+                    lib.cpSpaceRemoveConstraint(constraint_space, cp_constraint)
 
                 cp_bodys: list[Body] = []
                 cp_bodys_h = ffi.new_handle(cp_bodys)
@@ -117,12 +121,13 @@ class Space(PickleMixin, object):
                     cp_space, lib.ext_cpSpaceBodyIteratorFunc, cp_bodys_h
                 )
                 for cp_body in cp_bodys:
-                    cp_space = lib.cpBodyGetSpace(cp_body)
-                    lib.cpSpaceRemoveBody(cp_space, cp_body)
+                    body_space = lib.cpBodyGetSpace(cp_body)
+                    lib.cpSpaceRemoveBody(body_space, cp_body)
 
-                freefunc(cp_space)
+                freefunc(original_cp_space)
 
         self._space = ffi.gc(cp_space, spacefree)
+        lib.cpSpaceSetUserData(self._space, self._lock_handle)
 
         self._handlers: dict[
             Any, CollisionHandler
@@ -1122,12 +1127,9 @@ class Space(PickleMixin, object):
         This method allows the usage of the :mod:`copy` and :mod:`pickle`
         modules with this class.
         """
-        if not hasattr(self, "_lock"):
-            self._lock = threading.RLock()
+        super(Space, self).__setstate__(state)
 
         with self._lock:
-            super(Space, self).__setstate__(state)
-
             for k, v in state["special"]:
                 if k == "pymunk_version":
                     assert _version.version == v, (

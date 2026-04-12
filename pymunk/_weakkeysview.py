@@ -44,9 +44,11 @@ class WeakKeysView(SynchronizedKeysView[KT]):
         lock_getter: Callable[[], Any] = nullcontext,
     ) -> None:
         super().__init__(weak_dict, lock_getter)
-        self._snapshot_on_iter = lock_getter is not nullcontext
+        self._lockless = lock_getter is nullcontext
 
     def __iter__(self) -> Iterator[KT]:
-        if not self._snapshot_on_iter:
+        if self._lockless:
             return iter(self._mapping.keys())
-        return super().__iter__()
+
+        with self._lock():
+            return iter(tuple(self._mapping.keys()))

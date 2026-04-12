@@ -11,7 +11,7 @@ from ._chipmunk_cffi import ffi
 from ._chipmunk_cffi import lib as cp
 from ._pickle import PickleMixin, _State
 from ._typing_attr import TypingAttrMixing
-from ._util import _dead_ref, _locked_spaces, _space_lock
+from ._util import _dead_ref, _lock_from_cp_space, _locked_spaces, _space_lock
 from .bb import BB
 from .contact_point_set import ContactPointSet
 from .query_info import PointQueryInfo, SegmentQueryInfo
@@ -57,11 +57,11 @@ class Shape(PickleMixin, TypingAttrMixing, object):
             body._shapes[self] = None
         else:
             self._body = _dead_ref
+        self._body_lock = getattr(body, "_lock_context", None)
 
         def shapefree(cp_shape: ffi.CData) -> None:
-            shape = ffi.from_handle(cp.cpShapeGetUserData(cp_shape))
-            with _space_lock(shape.space):
-                cp_space = cp.cpShapeGetSpace(cp_shape)
+            cp_space = cp.cpShapeGetSpace(cp_shape)
+            with _lock_from_cp_space(cp_space):
                 if cp_space != ffi.NULL:
                     cp.cpSpaceRemoveShape(cp_space, cp_shape)
 
@@ -261,7 +261,10 @@ class Shape(PickleMixin, TypingAttrMixing, object):
     @body.setter
     def body(self, body: Optional["Body"]) -> None:
         old_body = self.body
-        with _locked_spaces(self.space, None if body is None else body.space):
+        old_space = self.space
+        new_space = None if body is None else body.space
+        with _locked_spaces(old_space, new_space):
+            old_body = self.body
             if old_body is not None:
                 del old_body._shapes[self]
             cp_body = ffi.NULL if body is None else body._body
@@ -269,8 +272,10 @@ class Shape(PickleMixin, TypingAttrMixing, object):
             if body is not None:
                 body._shapes[self] = None
                 self._body = weakref.ref(body)
+                self._body_lock = body._lock_context
             else:
                 self._body = _dead_ref
+                self._body_lock = None
 
     def update(self, transform: Transform) -> BB:
         """Update, cache and return the bounding box of a shape with an
@@ -767,9 +772,10 @@ class Poly(Shape):
         This method allows the usage of the :mod:`copy` and :mod:`pickle`
         modules with this class.
         """
-        d = super(Poly, self).__getstate__()
+        with self._lock_context():
+            d = super(Poly, self).__getstate__()
 
-        d["init"].append(("vertices", self.get_vertices()))
-        d["init"].append(("transform", None))
-        d["init"].append(("radius", self.radius))
-        return d
+            d["init"].append(("vertices", self.get_vertices()))
+            d["init"].append(("transform", None))
+            d["init"].append(("radius", self.radius))
+            return d
