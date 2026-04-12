@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 from ._chipmunk_cffi import ffi, lib
 from ._pickle import PickleMixin, _State
 from ._typing_attr import TypingAttrMixing
-from ._util import _dead_ref
-from ._weakkeysview import WeakKeysView
+from ._util import _dead_ref, _locked_spaces, _space_lock
+from ._weakkeysview import SynchronizedKeysView, WeakKeysView
 from .vec2d import Vec2d
 
 _BodyType = int
@@ -191,19 +191,21 @@ class Body(PickleMixin, TypingAttrMixing, object):
         """
 
         def freebody(cp_body: ffi.CData) -> None:
-            # remove all shapes on this body from the space
-            lib.cpBodyEachShape(cp_body, lib.ext_cpBodyShapeIteratorFunc, ffi.NULL)
+            body = ffi.from_handle(lib.cpBodyGetUserData(cp_body))
+            with _space_lock(body.space):
+                # remove all shapes on this body from the space
+                lib.cpBodyEachShape(cp_body, lib.ext_cpBodyShapeIteratorFunc, ffi.NULL)
 
-            # remove all constraints on this body from the space
-            lib.cpBodyEachConstraint(
-                cp_body, lib.ext_cpBodyConstraintIteratorFunc, ffi.NULL
-            )
+                # remove all constraints on this body from the space
+                lib.cpBodyEachConstraint(
+                    cp_body, lib.ext_cpBodyConstraintIteratorFunc, ffi.NULL
+                )
 
-            cp_space = lib.cpBodyGetSpace(cp_body)
-            # print(cp_space, cp_space == ffi.NULL)
-            if cp_space != ffi.NULL:
-                lib.cpSpaceRemoveBody(cp_space, cp_body)
-            lib.cpBodyFree(cp_body)
+                cp_space = lib.cpBodyGetSpace(cp_body)
+                # print(cp_space, cp_space == ffi.NULL)
+                if cp_space != ffi.NULL:
+                    lib.cpSpaceRemoveBody(cp_space, cp_body)
+                lib.cpBodyFree(cp_body)
 
         if body_type == Body.DYNAMIC:
             self._body = ffi.gc(lib.cpBodyNew(mass, moment), freebody)
@@ -221,6 +223,10 @@ class Body(PickleMixin, TypingAttrMixing, object):
         lib.cpBodySetUserData(self._body, d)
 
         # self._set_id()
+
+    def _lock_context(self):
+        space_ref = getattr(self, "_space", _dead_ref)
+        return _space_lock(space_ref())
 
     @property
     def id(self) -> int:
@@ -249,14 +255,16 @@ class Body(PickleMixin, TypingAttrMixing, object):
         Note that dynamic bodies must have mass > 0 if they are attached to a
         Space.
         """
-        return lib.cpBodyGetMass(self._body)
+        with self._lock_context():
+            return lib.cpBodyGetMass(self._body)
 
     @mass.setter
     def mass(self, mass: float) -> None:
-        assert (
-            self.space is None or 0 < mass < math.inf
-        ), "Dynamic bodies must have mass > 0 if they are attached to a Space."
-        lib.cpBodySetMass(self._body, mass)
+        with self._lock_context():
+            assert self.space is None or 0 < mass < math.inf, (
+                "Dynamic bodies must have mass > 0 if they are attached to a Space."
+            )
+            lib.cpBodySetMass(self._body, mass)
 
     @property
     def moment(self) -> float:
@@ -266,14 +274,16 @@ class Body(PickleMixin, TypingAttrMixing, object):
         valid to set moment to float('inf'). This will make a body that cannot
         rotate.
         """
-        return lib.cpBodyGetMoment(self._body)
+        with self._lock_context():
+            return lib.cpBodyGetMoment(self._body)
 
     @moment.setter
     def moment(self, moment: float) -> None:
-        assert (
-            self.space is None or moment > 0
-        ), "Dynamic bodies must have moment > 0 if they are attached to a Space"
-        lib.cpBodySetMoment(self._body, moment)
+        with self._lock_context():
+            assert self.space is None or moment > 0, (
+                "Dynamic bodies must have moment > 0 if they are attached to a Space"
+            )
+            lib.cpBodySetMoment(self._body, moment)
 
     @property
     def position(self) -> Vec2d:
@@ -283,13 +293,15 @@ class Body(PickleMixin, TypingAttrMixing, object):
         :py:func:`Space.reindex_shapes_for_body` to update the collision
         detection information for the attached shapes if plan to make any
         queries against the space."""
-        v = lib.cpBodyGetPosition(self._body)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = lib.cpBodyGetPosition(self._body)
+            return Vec2d(v.x, v.y)
 
     @position.setter
     def position(self, pos: tuple[float, float]) -> None:
-        assert len(pos) == 2
-        lib.cpBodySetPosition(self._body, pos)
+        with self._lock_context():
+            assert len(pos) == 2
+            lib.cpBodySetPosition(self._body, pos)
 
     @property
     def center_of_gravity(self) -> Vec2d:
@@ -298,24 +310,28 @@ class Body(PickleMixin, TypingAttrMixing, object):
         The default value is (0, 0), meaning the center of gravity is the
         same as the position of the body.
         """
-        v = lib.cpBodyGetCenterOfGravity(self._body)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = lib.cpBodyGetCenterOfGravity(self._body)
+            return Vec2d(v.x, v.y)
 
     @center_of_gravity.setter
     def center_of_gravity(self, cog: tuple[float, float]) -> None:
-        assert len(cog) == 2
-        lib.cpBodySetCenterOfGravity(self._body, cog)
+        with self._lock_context():
+            assert len(cog) == 2
+            lib.cpBodySetCenterOfGravity(self._body, cog)
 
     @property
     def velocity(self) -> Vec2d:
         """Linear velocity of the center of gravity of the body."""
-        v = lib.cpBodyGetVelocity(self._body)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = lib.cpBodyGetVelocity(self._body)
+            return Vec2d(v.x, v.y)
 
     @velocity.setter
     def velocity(self, vel: tuple[float, float]) -> None:
-        assert len(vel) == 2
-        lib.cpBodySetVelocity(self._body, vel)
+        with self._lock_context():
+            assert len(vel) == 2
+            lib.cpBodySetVelocity(self._body, vel)
 
     @property
     def force(self) -> Vec2d:
@@ -324,13 +340,15 @@ class Body(PickleMixin, TypingAttrMixing, object):
         This value is reset for every time step. Note that this is not the
         total of forces acting on the body (such as from collisions), but the
         force applied manually from the apply force functions."""
-        v = lib.cpBodyGetForce(self._body)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = lib.cpBodyGetForce(self._body)
+            return Vec2d(v.x, v.y)
 
     @force.setter
     def force(self, f: tuple[float, float]) -> None:
-        assert len(f) == 2
-        lib.cpBodySetForce(self._body, f)
+        with self._lock_context():
+            assert len(f) == 2
+            lib.cpBodySetForce(self._body, f)
 
     @property
     def angle(self) -> float:
@@ -347,37 +365,44 @@ class Body(PickleMixin, TypingAttrMixing, object):
             ball is "rolling" down a slope it might be because the Circle shape
             attached to the body or the slope shape does not have any friction
             set."""
-        return lib.cpBodyGetAngle(self._body)
+        with self._lock_context():
+            return lib.cpBodyGetAngle(self._body)
 
     @angle.setter
     def angle(self, angle: float) -> None:
-        lib.cpBodySetAngle(self._body, angle)
+        with self._lock_context():
+            lib.cpBodySetAngle(self._body, angle)
 
     @property
     def angular_velocity(self) -> float:
         """The angular velocity of the body in radians per second."""
-        return lib.cpBodyGetAngularVelocity(self._body)
+        with self._lock_context():
+            return lib.cpBodyGetAngularVelocity(self._body)
 
     @angular_velocity.setter
     def angular_velocity(self, w: float) -> None:
-        lib.cpBodySetAngularVelocity(self._body, w)
+        with self._lock_context():
+            lib.cpBodySetAngularVelocity(self._body, w)
 
     @property
     def torque(self) -> float:
         """The torque applied to the body.
 
         This value is reset for every time step."""
-        return lib.cpBodyGetTorque(self._body)
+        with self._lock_context():
+            return lib.cpBodyGetTorque(self._body)
 
     @torque.setter
     def torque(self, t: float) -> None:
-        lib.cpBodySetTorque(self._body, t)
+        with self._lock_context():
+            lib.cpBodySetTorque(self._body, t)
 
     @property
     def rotation_vector(self) -> Vec2d:
         """The rotation vector for the body."""
-        v = lib.cpBodyGetRotation(self._body)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = lib.cpBodyGetRotation(self._body)
+            return Vec2d(v.x, v.y)
 
     @property
     def space(self) -> Optional["Space"]:
@@ -443,13 +468,14 @@ class Body(PickleMixin, TypingAttrMixing, object):
 
     @velocity_func.setter
     def velocity_func(self, func: _VelocityFunc) -> None:
-        if func == Body.update_velocity:
-            lib.cpBodySetVelocityUpdateFunc(
-                self._body, ffi.addressof(lib, "cpBodyUpdateVelocity")
-            )
-        else:
-            self._velocity_func = func
-            lib.cpBodySetVelocityUpdateFunc(self._body, lib.ext_cpBodyVelocityFunc)
+        with self._lock_context():
+            if func == Body.update_velocity:
+                lib.cpBodySetVelocityUpdateFunc(
+                    self._body, ffi.addressof(lib, "cpBodyUpdateVelocity")
+                )
+            else:
+                self._velocity_func = func
+                lib.cpBodySetVelocityUpdateFunc(self._body, lib.ext_cpBodyVelocityFunc)
 
     @property
     def position_func(self) -> _PositionFunc:
@@ -467,18 +493,20 @@ class Body(PickleMixin, TypingAttrMixing, object):
 
     @position_func.setter
     def position_func(self, func: _PositionFunc) -> None:
-        if func == Body.update_position:
-            lib.cpBodySetPositionUpdateFunc(
-                self._body, ffi.addressof(lib, "cpBodyUpdatePosition")
-            )
-        else:
-            self._position_func = func
-            lib.cpBodySetPositionUpdateFunc(self._body, lib.ext_cpBodyPositionFunc)
+        with self._lock_context():
+            if func == Body.update_position:
+                lib.cpBodySetPositionUpdateFunc(
+                    self._body, ffi.addressof(lib, "cpBodyUpdatePosition")
+                )
+            else:
+                self._position_func = func
+                lib.cpBodySetPositionUpdateFunc(self._body, lib.ext_cpBodyPositionFunc)
 
     @property
     def kinetic_energy(self) -> float:
         """Get the kinetic energy of a body."""
-        return lib.cpBodyKineticEnergy(self._body)
+        with self._lock_context():
+            return lib.cpBodyKineticEnergy(self._body)
 
     @staticmethod
     def update_velocity(
@@ -516,9 +544,10 @@ class Body(PickleMixin, TypingAttrMixing, object):
         Both impulses and forces are affected the mass of an object. Doubling
         the mass of the object will halve the effect.
         """
-        assert len(force) == 2
-        assert len(point) == 2
-        lib.cpBodyApplyForceAtWorldPoint(self._body, force, point)
+        with self._lock_context():
+            assert len(force) == 2
+            assert len(point) == 2
+            lib.cpBodyApplyForceAtWorldPoint(self._body, force, point)
 
     def apply_force_at_local_point(
         self, force: tuple[float, float], point: tuple[float, float] = (0, 0)
@@ -526,17 +555,19 @@ class Body(PickleMixin, TypingAttrMixing, object):
         """Add the local force force to body as if applied from the body
         local point.
         """
-        assert len(force) == 2
-        assert len(point) == 2
-        lib.cpBodyApplyForceAtLocalPoint(self._body, force, point)
+        with self._lock_context():
+            assert len(force) == 2
+            assert len(point) == 2
+            lib.cpBodyApplyForceAtLocalPoint(self._body, force, point)
 
     def apply_impulse_at_world_point(
         self, impulse: tuple[float, float], point: tuple[float, float]
     ) -> None:
         """Add the impulse impulse to body as if applied from the world point."""
-        assert len(impulse) == 2
-        assert len(point) == 2
-        lib.cpBodyApplyImpulseAtWorldPoint(self._body, impulse, point)
+        with self._lock_context():
+            assert len(impulse) == 2
+            assert len(point) == 2
+            lib.cpBodyApplyImpulseAtWorldPoint(self._body, impulse, point)
 
     def apply_impulse_at_local_point(
         self, impulse: tuple[float, float], point: tuple[float, float] = (0, 0)
@@ -544,25 +575,28 @@ class Body(PickleMixin, TypingAttrMixing, object):
         """Add the local impulse impulse to body as if applied from the body
         local point.
         """
-        assert len(impulse) == 2
-        assert len(point) == 2
-        lib.cpBodyApplyImpulseAtLocalPoint(self._body, impulse, point)
+        with self._lock_context():
+            assert len(impulse) == 2
+            assert len(point) == 2
+            lib.cpBodyApplyImpulseAtLocalPoint(self._body, impulse, point)
 
     def activate(self) -> None:
         """Reset the idle timer on a body.
 
         If it was sleeping, wake it and any other bodies it was touching.
         """
-        lib.cpBodyActivate(self._body)
+        with self._lock_context():
+            lib.cpBodyActivate(self._body)
 
     def sleep(self) -> None:
         """Forces a body to fall asleep immediately even if it's in midair.
 
         Cannot be called from a callback.
         """
-        if self.space == None:
-            raise Exception("Body not added to space")
-        lib.cpBodySleep(self._body)
+        with self._lock_context():
+            if self.space == None:
+                raise Exception("Body not added to space")
+            lib.cpBodySleep(self._body)
 
     def sleep_with_group(self, body: "Body") -> None:
         """Force a body to fall asleep immediately along with other bodies
@@ -578,14 +612,16 @@ class Body(PickleMixin, TypingAttrMixing, object):
         to initialize levels and start stacks of objects in a pre-sleeping
         state.
         """
-        if self.space == None:
-            raise Exception("Body not added to space")
-        lib.cpBodySleepWithGroup(self._body, body._body)
+        with _locked_spaces(self.space, body.space):
+            if self.space == None:
+                raise Exception("Body not added to space")
+            lib.cpBodySleepWithGroup(self._body, body._body)
 
     @property
     def is_sleeping(self) -> bool:
         """Returns true if the body is sleeping."""
-        return bool(lib.cpBodyIsSleeping(self._body))
+        with self._lock_context():
+            return bool(lib.cpBodyIsSleeping(self._body))
 
     @property
     def body_type(self) -> _BodyType:
@@ -597,17 +633,21 @@ class Body(PickleMixin, TypingAttrMixing, object):
         calculated moments of inertia are not preserved when changing types.
         This function cannot be called directly in a collision callback.
         """
-        return lib.cpBodyGetType(self._body)
+        with self._lock_context():
+            return lib.cpBodyGetType(self._body)
 
     @body_type.setter
     def body_type(self, body_type: _BodyType) -> None:
-        if body_type != Body.DYNAMIC:
-            for c in self.constraints:
-                assert (c.a != self and c.b.body_type == Body.DYNAMIC) or (
-                    c.b != self and c.a.body_type == Body.DYNAMIC
-                ), "Cannot set a non-dynamic body type when Body is connected to a constraint {c} with a non-dynamic other body."
+        with self._lock_context():
+            if body_type != Body.DYNAMIC:
+                for c in self.constraints:
+                    assert (c.a != self and c.b.body_type == Body.DYNAMIC) or (
+                        c.b != self and c.a.body_type == Body.DYNAMIC
+                    ), (
+                        "Cannot set a non-dynamic body type when Body is connected to a constraint {c} with a non-dynamic other body."
+                    )
 
-        lib.cpBodySetType(self._body, body_type)
+            lib.cpBodySetType(self._body, body_type)
 
     def each_arbiter(
         self,
@@ -631,9 +671,10 @@ class Body(PickleMixin, TypingAttrMixing, object):
 
             Do not hold on to the Arbiter after the callback!
         """
-        d = self, func, args, kwargs
-        data = ffi.new_handle(d)
-        lib.cpBodyEachArbiter(self._body, lib.ext_cpBodyArbiterIteratorFunc, data)
+        with self._lock_context():
+            d = self, func, args, kwargs
+            data = ffi.new_handle(d)
+            lib.cpBodyEachArbiter(self._body, lib.ext_cpBodyArbiterIteratorFunc, data)
 
     @property
     def constraints(self) -> KeysView["Constraint"]:
@@ -647,7 +688,7 @@ class Body(PickleMixin, TypingAttrMixing, object):
         collected it will automatically be removed from this collection as
         well.
         """
-        return WeakKeysView(self._constraints)
+        return WeakKeysView(self._constraints, lambda: self._lock_context())
 
     @property
     def shapes(self) -> KeysView["Shape"]:
@@ -663,7 +704,7 @@ class Body(PickleMixin, TypingAttrMixing, object):
         >>> shape == circle
         True
         """
-        return self._shapes.keys()
+        return SynchronizedKeysView(self._shapes, lambda: self._lock_context())
 
     def local_to_world(self, v: tuple[float, float]) -> Vec2d:
         """Convert body local coordinates to world space coordinates
@@ -674,18 +715,20 @@ class Body(PickleMixin, TypingAttrMixing, object):
 
         :param v: Vector in body local coordinates
         """
-        assert len(v) == 2
-        v2 = lib.cpBodyLocalToWorld(self._body, v)
-        return Vec2d(v2.x, v2.y)
+        with self._lock_context():
+            assert len(v) == 2
+            v2 = lib.cpBodyLocalToWorld(self._body, v)
+            return Vec2d(v2.x, v2.y)
 
     def world_to_local(self, v: tuple[float, float]) -> Vec2d:
         """Convert world space coordinates to body local coordinates
 
         :param v: Vector in world space coordinates
         """
-        assert len(v) == 2
-        v2 = lib.cpBodyWorldToLocal(self._body, v)
-        return Vec2d(v2.x, v2.y)
+        with self._lock_context():
+            assert len(v) == 2
+            v2 = lib.cpBodyWorldToLocal(self._body, v)
+            return Vec2d(v2.x, v2.y)
 
     def velocity_at_world_point(self, point: tuple[float, float]) -> Vec2d:
         """Get the absolute velocity of the rigid body at the given world
@@ -695,17 +738,19 @@ class Body(PickleMixin, TypingAttrMixing, object):
         surface of a body since the angular velocity affects everything
         except the center of gravity.
         """
-        assert len(point) == 2
-        v = lib.cpBodyGetVelocityAtWorldPoint(self._body, point)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            assert len(point) == 2
+            v = lib.cpBodyGetVelocityAtWorldPoint(self._body, point)
+            return Vec2d(v.x, v.y)
 
     def velocity_at_local_point(self, point: tuple[float, float]) -> Vec2d:
         """Get the absolute velocity of the rigid body at the given body
         local point
         """
-        assert len(point) == 2
-        v = lib.cpBodyGetVelocityAtLocalPoint(self._body, point)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            assert len(point) == 2
+            v = lib.cpBodyGetVelocityAtLocalPoint(self._body, point)
+            return Vec2d(v.x, v.y)
 
     def __getstate__(self) -> _State:
         """Return the state of this object
@@ -713,13 +758,14 @@ class Body(PickleMixin, TypingAttrMixing, object):
         This method allows the usage of the :mod:`copy` and :mod:`pickle`
         modules with this class.
         """
-        d = super(Body, self).__getstate__()
+        with self._lock_context():
+            d = super(Body, self).__getstate__()
 
-        d["special"].append(("is_sleeping", self.is_sleeping))
-        d["special"].append(("_velocity_func", self._velocity_func))
-        d["special"].append(("_position_func", self._position_func))
+            d["special"].append(("is_sleeping", self.is_sleeping))
+            d["special"].append(("_velocity_func", self._velocity_func))
+            d["special"].append(("_position_func", self._position_func))
 
-        return d
+            return d
 
     def __setstate__(self, state: _State) -> None:
         """Unpack this object from a saved state.
@@ -727,12 +773,13 @@ class Body(PickleMixin, TypingAttrMixing, object):
         This method allows the usage of the :mod:`copy` and :mod:`pickle`
         modules with this class.
         """
-        super(Body, self).__setstate__(state)
+        with self._lock_context():
+            super(Body, self).__setstate__(state)
 
-        for k, v in state["special"]:
-            if k == "is_sleeping" and v:
-                pass
-            elif k == "_velocity_func" and v != None:
-                self.velocity_func = v
-            elif k == "_position_func" and v != None:
-                self.position_func = v
+            for k, v in state["special"]:
+                if k == "is_sleeping" and v:
+                    pass
+                elif k == "_velocity_func" and v != None:
+                    self.velocity_func = v
+                elif k == "_position_func" and v != None:
+                    self.position_func = v

@@ -11,7 +11,7 @@ from ._chipmunk_cffi import ffi
 from ._chipmunk_cffi import lib as cp
 from ._pickle import PickleMixin, _State
 from ._typing_attr import TypingAttrMixing
-from ._util import _dead_ref
+from ._util import _dead_ref, _locked_spaces, _space_lock
 from .bb import BB
 from .contact_point_set import ContactPointSet
 from .query_info import PointQueryInfo, SegmentQueryInfo
@@ -59,18 +59,24 @@ class Shape(PickleMixin, TypingAttrMixing, object):
             self._body = _dead_ref
 
         def shapefree(cp_shape: ffi.CData) -> None:
-            cp_space = cp.cpShapeGetSpace(cp_shape)
-            if cp_space != ffi.NULL:
-                cp.cpSpaceRemoveShape(cp_space, cp_shape)
+            shape = ffi.from_handle(cp.cpShapeGetUserData(cp_shape))
+            with _space_lock(shape.space):
+                cp_space = cp.cpShapeGetSpace(cp_shape)
+                if cp_space != ffi.NULL:
+                    cp.cpSpaceRemoveShape(cp_space, cp_shape)
 
-            # cp_body = cp.cpShapeGetBody(cp_shape)
-            # if cp_body != ffi.NULL:
-            #     cp.cpShapeSetBody(cp_shape, ffi.NULL)
-            cp.cpShapeFree(cp_shape)
+                # cp_body = cp.cpShapeGetBody(cp_shape)
+                # if cp_body != ffi.NULL:
+                #     cp.cpShapeSetBody(cp_shape, ffi.NULL)
+                cp.cpShapeFree(cp_shape)
 
         self._shape = ffi.gc(_shape, shapefree)
         self._h = ffi.new_handle(self)  # to prevent GC of the handle
         cp.cpShapeSetUserData(self._shape, self._h)
+
+    def _lock_context(self):
+        space_ref = getattr(self, "_space", _dead_ref)
+        return _space_lock(space_ref())
 
     @property
     def mass(self) -> float:
@@ -80,11 +86,13 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         of a body from the shapes attached to it. (Instead of setting the body
         mass and inertia directly)
         """
-        return cp.cpShapeGetMass(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetMass(self._shape)
 
     @mass.setter
     def mass(self, mass: float) -> None:
-        cp.cpShapeSetMass(self._shape, mass)
+        with self._lock_context():
+            cp.cpShapeSetMass(self._shape, mass)
 
     @property
     def density(self) -> float:
@@ -94,27 +102,32 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         of a body from the shapes attached to it. (Instead of setting the body
         mass and inertia directly)
         """
-        return cp.cpShapeGetDensity(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetDensity(self._shape)
 
     @density.setter
     def density(self, density: float) -> None:
-        cp.cpShapeSetDensity(self._shape, density)
+        with self._lock_context():
+            cp.cpShapeSetDensity(self._shape, density)
 
     @property
     def moment(self) -> float:
         """The calculated moment of this shape."""
-        return cp.cpShapeGetMoment(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetMoment(self._shape)
 
     @property
     def area(self) -> float:
         """The calculated area of this shape."""
-        return cp.cpShapeGetArea(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetArea(self._shape)
 
     @property
     def center_of_gravity(self) -> Vec2d:
         """The calculated center of gravity of this shape."""
-        v = cp.cpShapeGetCenterOfGravity(self._shape)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = cp.cpShapeGetCenterOfGravity(self._shape)
+            return Vec2d(v.x, v.y)
 
     @property
     def sensor(self) -> bool:
@@ -123,11 +136,13 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         Sensors only call collision callbacks, and never generate real
         collisions.
         """
-        return bool(cp.cpShapeGetSensor(self._shape))
+        with self._lock_context():
+            return bool(cp.cpShapeGetSensor(self._shape))
 
     @sensor.setter
     def sensor(self, is_sensor: bool) -> None:
-        cp.cpShapeSetSensor(self._shape, is_sensor)
+        with self._lock_context():
+            cp.cpShapeSetSensor(self._shape, is_sensor)
 
     @property
     def collision_type(self) -> int:
@@ -138,21 +153,25 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         See the :py:meth:`Space.on_collision` function for more
         information on when to use this property.
         """
-        return cp.cpShapeGetCollisionType(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetCollisionType(self._shape)
 
     @collision_type.setter
     def collision_type(self, t: int) -> None:
-        cp.cpShapeSetCollisionType(self._shape, t)
+        with self._lock_context():
+            cp.cpShapeSetCollisionType(self._shape, t)
 
     @property
     def filter(self) -> ShapeFilter:
         """Set the collision :py:class:`ShapeFilter` for this shape."""
-        f = cp.cpShapeGetFilter(self._shape)
-        return ShapeFilter(f.group, f.categories, f.mask)
+        with self._lock_context():
+            f = cp.cpShapeGetFilter(self._shape)
+            return ShapeFilter(f.group, f.categories, f.mask)
 
     @filter.setter
     def filter(self, f: ShapeFilter) -> None:
-        cp.cpShapeSetFilter(self._shape, f)
+        with self._lock_context():
+            cp.cpShapeSetFilter(self._shape, f)
 
     @property
     def elasticity(self) -> float:
@@ -162,11 +181,13 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         'perfect' bounce. However due to inaccuracies in the simulation
         using 1.0 or greater is not recommended.
         """
-        return cp.cpShapeGetElasticity(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetElasticity(self._shape)
 
     @elasticity.setter
     def elasticity(self, e: float) -> None:
-        cp.cpShapeSetElasticity(self._shape, e)
+        with self._lock_context():
+            cp.cpShapeSetElasticity(self._shape, e)
 
     @property
     def friction(self) -> float:
@@ -201,11 +222,13 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         Wood            Wood    0.4
         ==============  ======  ========
         """
-        return cp.cpShapeGetFriction(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetFriction(self._shape)
 
     @friction.setter
     def friction(self, u: float) -> None:
-        cp.cpShapeSetFriction(self._shape, u)
+        with self._lock_context():
+            cp.cpShapeSetFriction(self._shape, u)
 
     @property
     def surface_velocity(self) -> Vec2d:
@@ -215,13 +238,15 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         value is only used when calculating friction, not resolving the
         collision.
         """
-        v = cp.cpShapeGetSurfaceVelocity(self._shape)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = cp.cpShapeGetSurfaceVelocity(self._shape)
+            return Vec2d(v.x, v.y)
 
     @surface_velocity.setter
     def surface_velocity(self, surface_v: tuple[float, float]) -> None:
-        assert len(surface_v) == 2
-        cp.cpShapeSetSurfaceVelocity(self._shape, surface_v)
+        with self._lock_context():
+            assert len(surface_v) == 2
+            cp.cpShapeSetSurfaceVelocity(self._shape, surface_v)
 
     @property
     def body(self) -> Optional["Body"]:
@@ -235,15 +260,17 @@ class Shape(PickleMixin, TypingAttrMixing, object):
 
     @body.setter
     def body(self, body: Optional["Body"]) -> None:
-        if self.body is not None:
-            del self.body._shapes[self]
-        cp_body = ffi.NULL if body is None else body._body
-        cp.cpShapeSetBody(self._shape, cp_body)
-        if body is not None:
-            body._shapes[self] = None
-            self._body = weakref.ref(body)
-        else:
-            self._body = _dead_ref
+        old_body = self.body
+        with _locked_spaces(self.space, None if body is None else body.space):
+            if old_body is not None:
+                del old_body._shapes[self]
+            cp_body = ffi.NULL if body is None else body._body
+            cp.cpShapeSetBody(self._shape, cp_body)
+            if body is not None:
+                body._shapes[self] = None
+                self._body = weakref.ref(body)
+            else:
+                self._body = _dead_ref
 
     def update(self, transform: Transform) -> BB:
         """Update, cache and return the bounding box of a shape with an
@@ -252,13 +279,15 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         Useful if you have a shape without a body and want to use it for
         querying.
         """
-        _bb = cp.cpShapeUpdate(self._shape, transform)
-        return BB(_bb.l, _bb.b, _bb.r, _bb.t)
+        with self._lock_context():
+            _bb = cp.cpShapeUpdate(self._shape, transform)
+            return BB(_bb.l, _bb.b, _bb.r, _bb.t)
 
     def cache_bb(self) -> BB:
         """Update and returns the bounding box of this shape."""
-        _bb = cp.cpShapeCacheBB(self._shape)
-        return BB(_bb.l, _bb.b, _bb.r, _bb.t)
+        with self._lock_context():
+            _bb = cp.cpShapeCacheBB(self._shape)
+            return BB(_bb.l, _bb.b, _bb.r, _bb.t)
 
     @property
     def bb(self) -> BB:
@@ -270,8 +299,9 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         queries that aren't attached to bodies, you can also use
         :py:meth:`Shape.update`.
         """
-        _bb = cp.cpShapeGetBB(self._shape)
-        return BB(_bb.l, _bb.b, _bb.r, _bb.t)
+        with self._lock_context():
+            _bb = cp.cpShapeGetBB(self._shape)
+            return BB(_bb.l, _bb.b, _bb.r, _bb.t)
 
     def point_query(self, p: tuple[float, float]) -> PointQueryInfo:
         """Check if the given point lies within the shape.
@@ -281,18 +311,19 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         :return: tuple of (distance, info)
         :rtype: (float, :py:class:`PointQueryInfo`)
         """
-        assert len(p) == 2
-        info = ffi.new("cpPointQueryInfo *")
-        _ = cp.cpShapePointQuery(self._shape, p, info)
+        with self._lock_context():
+            assert len(p) == 2
+            info = ffi.new("cpPointQueryInfo *")
+            _ = cp.cpShapePointQuery(self._shape, p, info)
 
-        shape = ffi.from_handle(cp.cpShapeGetUserData(info.shape))
-        assert shape == self, "This is a bug in Pymunk. Please report it."
-        return PointQueryInfo(
-            self,
-            Vec2d(info.point.x, info.point.y),
-            info.distance,
-            Vec2d(info.gradient.x, info.gradient.y),
-        )
+            shape = ffi.from_handle(cp.cpShapeGetUserData(info.shape))
+            assert shape == self, "This is a bug in Pymunk. Please report it."
+            return PointQueryInfo(
+                self,
+                Vec2d(info.point.x, info.point.y),
+                info.distance,
+                Vec2d(info.gradient.x, info.gradient.y),
+            )
 
     def segment_query(
         self, start: tuple[float, float], end: tuple[float, float], radius: float = 0
@@ -303,29 +334,31 @@ class Shape(PickleMixin, TypingAttrMixing, object):
 
         :rtype: :py:class:`SegmentQueryInfo`
         """
-        assert len(start) == 2
-        assert len(end) == 2
-        info = ffi.new("cpSegmentQueryInfo *")
-        r = cp.cpShapeSegmentQuery(self._shape, start, end, radius, info)
-        if r:
-            shape = ffi.from_handle(cp.cpShapeGetUserData(info.shape))
-            assert shape == self, "This is a bug in Pymunk. Please report it."
-            return SegmentQueryInfo(
-                self,
-                Vec2d(info.point.x, info.point.y),
-                Vec2d(info.normal.x, info.normal.y),
-                info.alpha,
-            )
-        else:
-            return None
+        with self._lock_context():
+            assert len(start) == 2
+            assert len(end) == 2
+            info = ffi.new("cpSegmentQueryInfo *")
+            r = cp.cpShapeSegmentQuery(self._shape, start, end, radius, info)
+            if r:
+                shape = ffi.from_handle(cp.cpShapeGetUserData(info.shape))
+                assert shape == self, "This is a bug in Pymunk. Please report it."
+                return SegmentQueryInfo(
+                    self,
+                    Vec2d(info.point.x, info.point.y),
+                    Vec2d(info.normal.x, info.normal.y),
+                    info.alpha,
+                )
+            else:
+                return None
 
     def shapes_collide(self, b: "Shape") -> ContactPointSet:
         """Get contact information about this shape and shape b.
 
         :rtype: :py:class:`ContactPointSet`
         """
-        _points = cp.cpShapesCollide(self._shape, b._shape)
-        return ContactPointSet._from_cp(_points)
+        with _locked_spaces(self.space, b.space):
+            _points = cp.cpShapesCollide(self._shape, b._shape)
+            return ContactPointSet._from_cp(_points)
 
     @property
     def space(self) -> Optional["Space"]:
@@ -336,11 +369,13 @@ class Shape(PickleMixin, TypingAttrMixing, object):
 
     @property
     def _hashid(self) -> int:
-        return cp.cpShapeGetHashID(self._shape)
+        with self._lock_context():
+            return cp.cpShapeGetHashID(self._shape)
 
     @_hashid.setter
     def _hashid(self, v: int) -> None:
-        cp.cpShapeSetHashID(self._shape, v)
+        with self._lock_context():
+            cp.cpShapeSetHashID(self._shape, v)
 
     @staticmethod
     def _from_cp_shape(cp_shape: ffi.CData) -> Optional["Shape"]:
@@ -355,14 +390,15 @@ class Shape(PickleMixin, TypingAttrMixing, object):
         This method allows the usage of the :mod:`copy` and :mod:`pickle`
         modules with this class.
         """
-        d = super(Shape, self).__getstate__()
+        with self._lock_context():
+            d = super(Shape, self).__getstate__()
 
-        if self.mass > 0:
-            d["general"].append(("mass", self.mass))
-        if self.density > 0:
-            d["general"].append(("density", self.density))
+            if self.mass > 0:
+                d["general"].append(("mass", self.mass))
+            if self.density > 0:
+                d["general"].append(("density", self.density))
 
-        return d
+            return d
 
 
 class Circle(Shape):
@@ -400,12 +436,14 @@ class Circle(Shape):
             not result in realistic physical behavior. Only use if you know
             what you are doing!
         """
-        cp.cpCircleShapeSetRadius(self._shape, r)
+        with self._lock_context():
+            cp.cpCircleShapeSetRadius(self._shape, r)
 
     @property
     def radius(self) -> float:
         """The Radius of the circle."""
-        return cp.cpCircleShapeGetRadius(self._shape)
+        with self._lock_context():
+            return cp.cpCircleShapeGetRadius(self._shape)
 
     def unsafe_set_offset(self, o: tuple[float, float]) -> None:
         """Unsafe set the offset of the circle.
@@ -416,14 +454,16 @@ class Circle(Shape):
             not result in realistic physical behavior. Only use if you know
             what you are doing!
         """
-        assert len(o) == 2
-        cp.cpCircleShapeSetOffset(self._shape, o)
+        with self._lock_context():
+            assert len(o) == 2
+            cp.cpCircleShapeSetOffset(self._shape, o)
 
     @property
     def offset(self) -> Vec2d:
         """Offset. (body space coordinates)"""
-        v = cp.cpCircleShapeGetOffset(self._shape)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = cp.cpCircleShapeGetOffset(self._shape)
+            return Vec2d(v.x, v.y)
 
 
 class Segment(Shape):
@@ -463,14 +503,16 @@ class Segment(Shape):
     @property
     def a(self) -> Vec2d:
         """The first of the two endpoints for this segment"""
-        v = cp.cpSegmentShapeGetA(self._shape)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = cp.cpSegmentShapeGetA(self._shape)
+            return Vec2d(v.x, v.y)
 
     @property
     def b(self) -> Vec2d:
         """The second of the two endpoints for this segment"""
-        v = cp.cpSegmentShapeGetB(self._shape)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = cp.cpSegmentShapeGetB(self._shape)
+            return Vec2d(v.x, v.y)
 
     def unsafe_set_endpoints(
         self, a: tuple[float, float], b: tuple[float, float]
@@ -483,15 +525,17 @@ class Segment(Shape):
             not result in realistic physical behavior. Only use if you know
             what you are doing!
         """
-        assert len(a) == 2
-        assert len(b) == 2
-        cp.cpSegmentShapeSetEndpoints(self._shape, a, b)
+        with self._lock_context():
+            assert len(a) == 2
+            assert len(b) == 2
+            cp.cpSegmentShapeSetEndpoints(self._shape, a, b)
 
     @property
     def normal(self) -> Vec2d:
         """The normal"""
-        v = cp.cpSegmentShapeGetNormal(self._shape)
-        return Vec2d(v.x, v.y)
+        with self._lock_context():
+            v = cp.cpSegmentShapeGetNormal(self._shape)
+            return Vec2d(v.x, v.y)
 
     def unsafe_set_radius(self, r: float) -> None:
         """Set the radius of the segment.
@@ -502,12 +546,14 @@ class Segment(Shape):
             not result in realistic physical behavior. Only use if you know
             what you are doing!
         """
-        cp.cpSegmentShapeSetRadius(self._shape, r)
+        with self._lock_context():
+            cp.cpSegmentShapeSetRadius(self._shape, r)
 
     @property
     def radius(self) -> float:
         """The radius/thickness of the segment."""
-        return cp.cpSegmentShapeGetRadius(self._shape)
+        with self._lock_context():
+            return cp.cpSegmentShapeGetRadius(self._shape)
 
     def set_neighbors(
         self, prev: tuple[float, float], next: tuple[float, float]
@@ -517,9 +563,10 @@ class Segment(Shape):
         segments. By setting the neighbor segment endpoints you can tell
         Chipmunk to avoid colliding with the inner parts of the crack.
         """
-        assert len(prev) == 2
-        assert len(next) == 2
-        cp.cpSegmentShapeSetNeighbors(self._shape, prev, next)
+        with self._lock_context():
+            assert len(prev) == 2
+            assert len(next) == 2
+            cp.cpSegmentShapeSetNeighbors(self._shape, prev, next)
 
 
 class Poly(Shape):
@@ -601,7 +648,8 @@ class Poly(Shape):
             not result in realistic physical behavior. Only use if you know
             what you are doing!
         """
-        cp.cpPolyShapeSetRadius(self._shape, radius)
+        with self._lock_context():
+            cp.cpPolyShapeSetRadius(self._shape, radius)
 
     @property
     def radius(self) -> float:
@@ -609,7 +657,8 @@ class Poly(Shape):
 
         Extends the poly in all directions with the given radius.
         """
-        return cp.cpPolyShapeGetRadius(self._shape)
+        with self._lock_context():
+            return cp.cpPolyShapeGetRadius(self._shape)
 
     @staticmethod
     def create_box(
@@ -684,12 +733,13 @@ class Poly(Shape):
         :return: The vertices in local coords
         :rtype: [:py:class:`Vec2d`]
         """
-        verts = []
-        lines = cp.cpPolyShapeGetCount(self._shape)
-        for i in range(lines):
-            v = cp.cpPolyShapeGetVert(self._shape, i)
-            verts.append(Vec2d(v.x, v.y))
-        return verts
+        with self._lock_context():
+            verts = []
+            lines = cp.cpPolyShapeGetCount(self._shape)
+            for i in range(lines):
+                v = cp.cpPolyShapeGetVert(self._shape, i)
+                verts.append(Vec2d(v.x, v.y))
+            return verts
 
     def unsafe_set_vertices(
         self,
@@ -704,11 +754,12 @@ class Poly(Shape):
             not result in realistic physical behavior. Only use if you know
             what you are doing!
         """
-        if transform is None:
-            cp.cpPolyShapeSetVertsRaw(self._shape, len(vertices), vertices)
-            return
+        with self._lock_context():
+            if transform is None:
+                cp.cpPolyShapeSetVertsRaw(self._shape, len(vertices), vertices)
+                return
 
-        cp.cpPolyShapeSetVerts(self._shape, len(vertices), vertices, transform)
+            cp.cpPolyShapeSetVerts(self._shape, len(vertices), vertices, transform)
 
     def __getstate__(self) -> _State:
         """Return the state of this object.

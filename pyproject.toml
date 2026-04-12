@@ -2,19 +2,18 @@
 requires = [
     "setuptools",
     "wheel",
-    "cffi >= 1.17.1; platform_system != 'Emscripten'",
-    "cffi > 1.14.0; platform_system == 'Emscripten'",
+    "cffi >= 2.0.0; platform_system != 'Emscripten'",
+    "cffi >= 2.0.0; platform_system == 'Emscripten'",
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pymunk"
 version = "7.2.0" # remember to change me for new versions!
-# Require cffi >1.14.0 since that (and older) has problem with returning structs from functions.
-# Require cffi >= 1.17.1 since older cant work with latest setuptools version
+# Require cffi >= 2.0.0 for free-threaded CPython support.
 dependencies = [
-    "cffi >= 1.17.1; platform_system != 'Emscripten'",
-    "cffi > 1.14.0; platform_system == 'Emscripten'",
+    "cffi >= 2.0.0; platform_system != 'Emscripten'",
+    "cffi >= 2.0.0; platform_system == 'Emscripten'",
 ]
 authors = [{ name = "Victor Blomqvist", email = "vb@viblo.se" }]
 readme = "README.rst"
@@ -109,6 +108,7 @@ build = [
     "cp312-*",
     "cp313-*",
     "cp314-*",
+    "cp314t-*",
     "pp311-*",
 ]
 
@@ -122,16 +122,13 @@ build = [
 environment = { PYMUNK_BUILD_SLIM = "1" }
 test-skip = "*"
 archs = "all"
-skip = "cp314-*" # Until 3.14 build is figured out..
+skip = "cp314-* cp314t-*" # Until 3.14 build is figured out..
 build-verbosity = 1
 build-frontend = { name = "pip", args = "--no-build-isolation" }
 xbuild-tools = ["curl", "pkg-config", "tar"]
 before-build = [
-    # download wheel and pretend that it's compatible with the current platform settings
-    "curl https://files.pythonhosted.org/packages/8b/f1/672d303ddf17c24fc83afd712316fda78dc6fce1cd53011b839483e1ecc8/cffi-1.17.1-cp313-cp313-macosx_11_0_arm64.whl -L -o cffi-1.17.1-py3-none-any.whl",
-    "pip install cffi-1.17.1-py3-none-any.whl",
     # install the rest of the dependencies
-    "python -m pip install setuptools wheel cffi",
+    "python -m pip install setuptools wheel 'cffi>=2.0.0'",
 ]
 
 [tool.cibuildwheel.pyodide]

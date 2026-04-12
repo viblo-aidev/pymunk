@@ -1,5 +1,6 @@
-from collections.abc import Iterator, KeysView
-from typing import TYPE_CHECKING, TypeVar
+from collections.abc import Callable, Iterator, KeysView, Mapping
+from contextlib import nullcontext
+from typing import Any, TypeVar
 from weakref import WeakKeyDictionary
 
 # Can be simplified in Python 3.12, PEP 695
@@ -7,18 +8,45 @@ KT = TypeVar("KT")
 VT = TypeVar("VT")
 
 
-class WeakKeysView(KeysView[KT]):
-    def __init__(self, weak_dict: WeakKeyDictionary[KT, VT]) -> None:
-        self._weak_dict = weak_dict
+class SynchronizedKeysView(KeysView[KT]):
+    def __init__(
+        self,
+        mapping: Mapping[KT, VT],
+        lock_getter: Callable[[], Any] = nullcontext,
+    ) -> None:
+        self._mapping = mapping
+        self._lock_getter = lock_getter
+
+    def _lock(self) -> Any:
+        return self._lock_getter()
 
     def __iter__(self) -> Iterator[KT]:
-        return iter(self._weak_dict.keys())
+        with self._lock():
+            return iter(tuple(self._mapping.keys()))
 
     def __len__(self) -> int:
-        return len(self._weak_dict)
+        with self._lock():
+            return len(self._mapping)
 
     def __contains__(self, key: object) -> bool:
-        return key in self._weak_dict
+        with self._lock():
+            return key in self._mapping
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({list(self._weak_dict.keys())})"
+        with self._lock():
+            return f"{self.__class__.__name__}({list(self._mapping.keys())})"
+
+
+class WeakKeysView(SynchronizedKeysView[KT]):
+    def __init__(
+        self,
+        weak_dict: WeakKeyDictionary[KT, VT],
+        lock_getter: Callable[[], Any] = nullcontext,
+    ) -> None:
+        super().__init__(weak_dict, lock_getter)
+        self._snapshot_on_iter = lock_getter is not nullcontext
+
+    def __iter__(self) -> Iterator[KT]:
+        if not self._snapshot_on_iter:
+            return iter(self._mapping.keys())
+        return super().__iter__()
